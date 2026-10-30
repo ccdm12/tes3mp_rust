@@ -1,0 +1,26 @@
+[package]
+name = "esm_parser_lib" 
+version = "0.1.0"
+edition = "2024"
+
+# This section is often optional if you have src/lib.rs,
+# as Rust will infer the library.
+# But it's good to be explicit.
+[lib]
+name = "esm_parser_lib" # This is the name you'll use to import the library
+path = "src/lib.rs"
+
+[dependencies]
+bitflags = "2.9.1"
+bytemuck = "1.23.0"
+smart-default = "0.7.1"
+to_utf8 = {path = "../to_utf8"}
+glam.workspace = true
+num-derive = "0.4.2"
+num-traits = "0.2.19"
+strum_macros.workspace = true
+esm_parser_macros= {path = "../esm_parser_macros"}
+lazy_static = "1.5.0"
+num_enum = "0.7.6"
+serde.workspace = true
+

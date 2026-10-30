@@ -1,0 +1,59 @@
+use avian3d::prelude::PhysicsSystems;
+use bevy::prelude::*;
+mod trace;
+
+pub mod actor;
+mod actor_sweep;
+pub mod collision;
+mod components;
+mod constants;
+mod helpers;
+pub mod movement;
+pub mod position_interpolate;
+mod prepare_actor_sim_data;
+mod stepper;
+mod types;
+mod unstuck;
+
+mod apply_animation_motion;
+pub mod physics_setup;
+mod world_helpers;
+pub use apply_animation_motion::*;
+pub use components::CreaturePhysicsState;
+pub use movement::interpolate_visual_positions;
+use physics_setup::setup_nif_physics;
+pub use prepare_actor_sim_data::prepare_actor_simulation;
+pub use unstuck::unstuck_character;
+
+use crate::{
+    mechanics::{update_character_components, update_movement_component_from_intent},
+    physics::movement::{
+        character_movement_system, init_positions, sync_actor_physics_system, update_positions,
+    },
+};
+/// Allows the physics setup system to parent the collider to the desired root
+#[derive(Component)]
+pub struct CreatureControllerLink(pub Entity);
+
+pub struct MWPhysicsPlugin;
+impl Plugin for MWPhysicsPlugin {
+    fn build(&self, app: &mut bevy::app::App) {
+        app.add_systems(
+            FixedPostUpdate,
+            (
+                update_movement_component_from_intent,
+                update_character_components,
+                prepare_actor_simulation,
+                init_positions,
+                unstuck_character,
+                character_movement_system,
+                update_positions,
+                sync_actor_physics_system,
+                calculate_animation_displacement_system,
+            )
+                .chain()
+                .before(PhysicsSystems::Prepare),
+        );
+        app.add_observer(setup_nif_physics);
+    }
+}

@@ -1,0 +1,14 @@
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"
+rustflags = [
+    "--cfg", "getrandom_backend=\"wasm_js\""
+]
+[alias]
+# Just type `cargo wasm` instead of the long command!
+wasm = "build --profile wasm-release --target wasm32-unknown-unknown --no-default-features --features webgl"
+
+# ------------------------------
+# Remove everything below this if you don't want to use mold
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold"]

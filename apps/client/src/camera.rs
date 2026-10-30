@@ -1,0 +1,235 @@
+use crate::defs::{LocalPlayerMesh, TestingComponent};
+use crate::physics::actor::ActorPhysics;
+use bevy::input::common_conditions::input_just_pressed;
+use bevy::prelude::*;
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+
+use crate::const_defs::FIRST_PERSON_CAMERA_HEIGHT_OFFSET;
+
+pub struct MWCameraPlugin;
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CameraSyncSet;
+
+impl Plugin for MWCameraPlugin {
+    fn build(&self, app: &mut App) {
+        app.configure_sets(PostUpdate, CameraSyncSet) // DO THIS!
+            .add_systems(
+                Update,
+                toggle_cursor.run_if(input_just_pressed(KeyCode::Enter)),
+            )
+            .add_systems(
+                PostUpdate,
+                sync_camera_and_player
+                    .before(TransformSystems::Propagate)
+                    .in_set(CameraSyncSet),
+            );
+        #[cfg(target_arch = "wasm32")]
+        fix_web_cursor_lock(app);
+    }
+}
+#[derive(Component)]
+pub struct MWCamera {
+    /// Flag to indicate if the cursor is in a locked state or not.
+    /// Default is true
+    pub cursor_lock_active: bool,
+    /// Mouse x/y sensitivity
+    /// Default is Vec2::new(1.0, 1.0)
+    pub sensitivity: Vec2,
+    /// The camera offset relative to the camera target.
+    /// Offset is a tuple. The first value corresponds to the x offset, the second value to the y offset.
+    /// Example: offset: Offset::new(<my_x_value>, <my_y_value>);
+    /// Default is Offset::new(0.5, 0.4)
+    pub offset: Offset,
+    /// The min/max bounds of the camera.
+    /// This zoom is the position the camera stays in relation to the camera target.
+    /// Zoom is a tuple. The first value is the minimum zoom. The smaller the value, the closer the camera can come to it's target. The second value is the maximum zoom. The greater the maximum zoom, the farther away the camera can go from it's target.
+    /// The zoom is adjusted using the scroll wheel.
+    /// Default is Zoom::new(1.5, 3.0);
+    pub zoom: Zoom,
+    /// The speed at which the scroll wheel zooms in or out.
+    /// Default is 1.0
+    pub zoom_sensitivity: f32,
+    pub first_person: bool,
+}
+
+impl Default for MWCamera {
+    fn default() -> Self {
+        MWCamera {
+            cursor_lock_active: true,
+            sensitivity: Vec2::new(1.0, 1.0),
+            offset: Offset(0.0, 1.6),
+            zoom: Zoom::new(1.0, 5.0),
+            zoom_sensitivity: 1.0,
+            first_person: true,
+        }
+    }
+}
+
+/// Sets the zoom bounds (min & max)
+pub struct Zoom {
+    pub min: f32,
+    pub max: f32,
+    pub radius: f32,
+}
+
+impl Zoom {
+    pub fn new(min: f32, max: f32) -> Self {
+        Self {
+            min,
+            max,
+            radius: (min + max) / 2.0,
+        }
+    }
+}
+
+/// Offset the camera behind the player. For example, an offset value of (0.5, 0.25) will
+/// place the camera closer the player's right shoulder
+pub struct Offset(f32, f32);
+
+#[derive(Component)]
+pub struct MWCameraTarget;
+//TODO:: this should probably happen in the main crate's physics/input handling
+fn sync_camera_and_player(
+    mut player_q: Query<
+        (&mut Transform, &mut ActorPhysics),
+        (
+            With<MWCameraTarget>,
+            Without<LocalPlayerMesh>,
+            Without<TestingComponent>,
+        ),
+    >,
+    mut cam_q: Query<
+        (&mut MWCamera, &mut Transform),
+        (
+            Without<MWCameraTarget>,
+            Without<LocalPlayerMesh>,
+            Without<TestingComponent>,
+        ),
+    >,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    testing_query: Query<&Transform, (Without<LocalPlayerMesh>, With<TestingComponent>)>,
+) {
+    let Ok((mut player, mut player_actor)) = player_q.single_mut() else {
+        return;
+    };
+    let Ok((cam, mut cam_transform)) = cam_q.single_mut() else {
+        return;
+    };
+
+    // Calculate the desired camera translation based, radius, and xy_offset
+    let rotation_matrix = Mat3::from_quat(cam_transform.rotation);
+
+    let offset = rotation_matrix.mul_vec3(Vec3::new(cam.offset.0, cam.offset.1, 0.0));
+    let cam_zoom_radius = if !cam.first_person {
+        cam.zoom.radius
+    } else {
+        0.4
+    };
+    let desired_translation =
+        rotation_matrix.mul_vec3(Vec3::new(0.0, 0.0, cam_zoom_radius)) + offset;
+
+    // Define the local offset from the mesh's origin (bottom) to its center
+    let Ok(_testing_transform) = testing_query.single() else {
+        return;
+    };
+    let target_forward =
+        Vec3::new(-cam_transform.forward().x, 0.0, -cam_transform.forward().z).normalize_or_zero();
+    if !keyboard_input.pressed(KeyCode::AltLeft) {
+        player.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, target_forward);
+    }
+    if !cam.first_person {
+        cam_transform.translation = player.translation + desired_translation;
+    } else {
+        //const XZ_OFFSET: f32 = 0.07;
+
+        cam_transform.translation =
+            player.translation + Vec3::new(0.0, FIRST_PERSON_CAMERA_HEIGHT_OFFSET, 0.0);
+        player_actor.rotation = cam_transform.rotation;
+    }
+}
+fn toggle_cursor(
+    mut cam: Single<&mut MWCamera>,
+    mut cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
+) {
+    let is_currently_locked = cursor_options.grab_mode == CursorGrabMode::Locked;
+
+    cam.cursor_lock_active = !is_currently_locked;
+
+    if cam.cursor_lock_active {
+        cursor_options.grab_mode = CursorGrabMode::Locked;
+        cursor_options.visible = false;
+    } else {
+        cursor_options.grab_mode = CursorGrabMode::None;
+        cursor_options.visible = true;
+    }
+}
+#[cfg(target_arch = "wasm32")]
+fn fix_web_cursor_lock(app: &mut App) {
+    app.init_resource::<WasUnlockedFromWebInTheLastFrame>();
+    app.add_systems(Startup, setup_pointer_lock_change_event_listener);
+    app.add_systems(PreUpdate, update_cursor_grab_status);
+}
+
+#[cfg(target_arch = "wasm32")]
+use std::sync::{LazyLock, Mutex};
+
+#[cfg(target_arch = "wasm32")]
+static POINTER_LOCKED: LazyLock<Mutex<Option<bool>>> = LazyLock::new(|| Mutex::new(None));
+
+#[cfg(target_arch = "wasm32")]
+fn setup_pointer_lock_change_event_listener() {
+    use web_sys::wasm_bindgen::JsCast;
+    use web_sys::wasm_bindgen::prelude::Closure;
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let document_inner = document.clone();
+    let cb: Closure<dyn Fn(web_sys::Event)> = Closure::new(move |_event: web_sys::Event| {
+        let element = document_inner.pointer_lock_element();
+        POINTER_LOCKED.lock().unwrap().replace(element.is_some());
+    });
+    document
+        .add_event_listener_with_callback("pointerlockchange", cb.as_ref().unchecked_ref())
+        .unwrap();
+
+    cb.into_js_value();
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Resource, Default)]
+struct WasUnlockedFromWebInTheLastFrame(bool);
+
+#[cfg(target_arch = "wasm32")]
+/// Event triggered when the cursor is forced to unlock, e.g. by pressing the Escape key when in fullscreen mode.
+#[derive(EntityEvent, Copy, Clone, Debug)]
+pub struct ForceUnlockCursor {
+    /// The entity of the window that was unlocked.
+    pub entity: Entity,
+}
+#[cfg(target_arch = "wasm32")]
+fn update_cursor_grab_status(
+    mut commands: Commands,
+    mut cam: Single<&mut MWCamera>,
+    mut cursor_options: Query<(Entity, &mut CursorOptions)>,
+    mut was_unlocked: ResMut<WasUnlockedFromWebInTheLastFrame>,
+) {
+    let Some(locked) = POINTER_LOCKED.lock().unwrap().take() else {
+        return;
+    };
+    cam.cursor_lock_active = locked;
+    for (entity, mut cursor_options) in &mut cursor_options {
+        let new_state = if locked {
+            cursor_options.visible = false;
+            CursorGrabMode::Locked
+        } else {
+            cursor_options.visible = true;
+            CursorGrabMode::None
+        };
+        if cursor_options.grab_mode != new_state {
+            cursor_options.grab_mode = new_state;
+            if new_state == CursorGrabMode::None {
+                commands.trigger(ForceUnlockCursor { entity });
+                was_unlocked.0 = true;
+            }
+        }
+    }
+}

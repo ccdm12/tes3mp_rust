@@ -1,0 +1,19 @@
+[package]
+name = "common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy_ecs = { workspace = true, features = ["serialize"] }
+bevy_math = { workspace = true, features = ["serialize"] }
+esm_parser_lib.workspace = true
+serde = { workspace = true }
+bitflags = { workspace = true }
+bevy_state = { workspace = true }
+strum_macros.workspace = true
+strum.workspace = true
+[lints]
+workspace = true

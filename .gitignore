@@ -1,0 +1,7 @@
+/target
+Morrowind.esm
+Morrowind.bsa
+apps/client/assets/Data Files/
+Cargo.lock
+examples/
+crates/esm_parser_lib/m2
